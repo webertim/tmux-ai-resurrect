@@ -1,8 +1,10 @@
-// tmux-ai-resurrect — opencode integration.
+// tmux-ai-resurrect — opencode integration (server side).
 //
-// Subscribes to opencode session events and pushes the current session ID
-// into the pane cache managed by the CLI. On tmux restore, the resurrect
-// hook picks up that ID and relaunches opencode with `--session <id>`.
+// Subscribes to opencode's server-side session events and forwards the
+// current session ID to the tmux-ai-resurrect CLI. The TUI companion
+// (tui.js) additionally polls the active route to catch session switches
+// that don't surface as a server event our shape checks recognise
+// (e.g. selecting a session via /sessions).
 
 import { spawn } from "node:child_process";
 import { realpathSync } from "node:fs";
@@ -15,7 +17,7 @@ const TMUX_PANE = process.env.TMUX_PANE || "";
 
 let lastSessionID = "";
 
-function writeSession(sessionID) {
+export function writeSession(sessionID) {
 	if (!TMUX_PANE) return;
 	if (typeof sessionID !== "string" || !sessionID.startsWith("ses_")) return;
 	if (sessionID === lastSessionID) return;
@@ -27,11 +29,21 @@ function writeSession(sessionID) {
 	).unref();
 }
 
-function extractSessionID(event) {
+// Event payloads can carry the session id in a few different shapes
+// depending on opencode version and event type. Try them all rather than
+// hard-coding one — the cost is a couple of extra property lookups.
+export function extractSessionID(event) {
 	const props = event?.properties;
 	if (!props) return null;
-	if (props.info && typeof props.info.id === "string") return props.info.id;
-	if (typeof props.sessionID === "string") return props.sessionID;
+	const candidates = [
+		props.sessionID,
+		props?.info?.id,
+		props?.session?.id,
+		props.id,
+	];
+	for (const v of candidates) {
+		if (typeof v === "string" && v.startsWith("ses_")) return v;
+	}
 	return null;
 }
 
