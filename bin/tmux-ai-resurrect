@@ -58,24 +58,35 @@ cache_file_for() {
 	printf '%s/pane-%s.tsv\n' "$CACHE_DIR" "$safe"
 }
 
-# set --harness NAME --session-id ID [--cwd DIR] [--pane-key KEY]
+# set --harness NAME (--session-id ID | --from-stdin-json) [--cwd DIR] [--pane-key KEY]
 cmd_set() {
 	harness=""
 	session_id=""
 	cwd=""
 	key=""
+	from_stdin_json=0
 	while [ $# -gt 0 ]; do
 		case "$1" in
 			--harness) harness="$2"; shift 2 ;;
 			--session-id) session_id="$2"; shift 2 ;;
+			--from-stdin-json) from_stdin_json=1; shift ;;
 			--cwd) cwd="$2"; shift 2 ;;
 			--pane-key) key="$2"; shift 2 ;;
 			-h|--help)
 				cat <<'EOF'
-Usage: tmux-ai-resurrect set --harness NAME --session-id ID [--cwd DIR] [--pane-key KEY]
+Usage: tmux-ai-resurrect set --harness NAME [options]
 
-Records the currently-active AI session for the current tmux pane. Called by
-per-harness integrations whenever the harness reports a session change.
+Records the currently-active AI session for the current tmux pane.
+
+Session ID source (one required):
+  --session-id ID         Take the ID directly from the command line.
+  --from-stdin-json       Read a JSON object from stdin and extract .session_id
+                          (used by Claude Code hooks, which pass event data
+                          this way).
+
+Optional:
+  --cwd DIR               Working directory to record (default: \$PWD).
+  --pane-key KEY          Override the pane key (default: derived from tmux).
 EOF
 				return 0
 				;;
@@ -83,7 +94,23 @@ EOF
 		esac
 	done
 	[ -n "$harness" ] || die "set: --harness required"
-	[ -n "$session_id" ] || die "set: --session-id required"
+
+	if [ "$from_stdin_json" -eq 1 ]; then
+		json=$(cat)
+		if command -v jq >/dev/null 2>&1; then
+			session_id=$(printf '%s' "$json" | jq -r '.session_id // empty')
+		else
+			# Fallback regex for well-formed JSON. Session IDs are simple
+			# tokens (UUID-ish); no escaped quotes to worry about.
+			session_id=$(printf '%s' "$json" \
+				| sed -n 's/.*"session_id"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' \
+				| head -1)
+		fi
+		# Silently no-op when the harness sent us no session id — hooks fire
+		# in many contexts and we must never break the caller.
+		[ -n "$session_id" ] || return 0
+	fi
+	[ -n "$session_id" ] || die "set: --session-id or --from-stdin-json required"
 	[ -n "$key" ] || key=$(pane_key)
 
 	mkdir -p "$CACHE_DIR"
