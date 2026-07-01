@@ -1,14 +1,8 @@
 // tmux-ai-resurrect — opencode integration.
 //
-// Subscribes to opencode's session events and pushes the current session ID
-// into the per-pane cache managed by the tmux-ai-resurrect CLI. On tmux
-// restore, the resurrect hook picks up that ID and relaunches opencode with
-// `--session <id>`.
-//
-// This file is meant to be symlinked into `~/.config/opencode/plugins/` by
-// `tmux-ai-resurrect install opencode`. It resolves its own real path so it
-// can locate the CLI relative to the plugin repo without any hard-coded
-// system paths.
+// Subscribes to opencode session events and pushes the current session ID
+// into the pane cache managed by the CLI. On tmux restore, the resurrect
+// hook picks up that ID and relaunches opencode with `--session <id>`.
 
 import { spawn } from "node:child_process";
 import { realpathSync } from "node:fs";
@@ -16,9 +10,7 @@ import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 
 const HERE = dirname(realpathSync(fileURLToPath(import.meta.url)));
-const CLI =
-	process.env.TMUX_AI_RESURRECT_CLI ||
-	join(HERE, "..", "..", "bin", "tmux-ai-resurrect");
+const CLI = join(HERE, "..", "..", "bin", "tmux-ai-resurrect");
 const TMUX_PANE = process.env.TMUX_PANE || "";
 
 let lastSessionID = "";
@@ -28,13 +20,11 @@ function writeSession(sessionID) {
 	if (typeof sessionID !== "string" || !sessionID.startsWith("ses_")) return;
 	if (sessionID === lastSessionID) return;
 	lastSessionID = sessionID;
-	// Fire-and-forget: don't block opencode's event loop on the CLI write.
-	const child = spawn(
+	spawn(
 		CLI,
 		["set", "--harness", "opencode", "--session-id", sessionID],
 		{ stdio: "ignore", detached: true },
-	);
-	child.unref();
+	).unref();
 }
 
 function extractSessionID(event) {
@@ -57,5 +47,3 @@ export const TmuxAiResurrect = async () => {
 		},
 	};
 };
-
-export default TmuxAiResurrect;

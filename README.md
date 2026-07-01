@@ -14,7 +14,6 @@ opencode / Claude Code / Codex CLI session each pane was on.
 |--------------|---------------------------------------------------------------------------|-------------------------------------------|
 | opencode     | opencode plugin (auto-loaded from `~/.config/opencode/plugins/`)          | `tmux-ai-resurrect install opencode`      |
 | Claude Code  | Claude Code plugin (auto-loaded from `~/.claude/skills/`)                 | `tmux-ai-resurrect install claude`        |
-| Codex CLI    | (planned)                                                                 | —                                         |
 
 Adding a harness is small: three shell scripts under `integrations/<name>/`.
 See [integrations/README.md](./integrations/README.md).
@@ -68,17 +67,16 @@ tmux-ai-resurrect doctor
    `%N` id — so the mapping survives tmux server restarts.
 3. tmux-resurrect saves and restores the pane layout as usual.
 4. On restore, the TPM entry `tmux-ai-resurrect.tmux` has registered
-   opencode/claude/codex in `@resurrect-processes` with a resume wrapper:
+   opencode/claude in `@resurrect-processes` with a resume wrapper:
 
    ```
    ~opencode->tmux-ai-resurrect resume opencode
    ~claude  ->tmux-ai-resurrect resume claude
-   ~codex   ->tmux-ai-resurrect resume codex
    ```
 
    The wrapper looks up the pane's saved session id and execs the harness
-   with the appropriate resume flag
-   (`opencode --session ID`, `claude --resume ID`, `codex resume ID`).
+   with the appropriate resume flag (`opencode --session ID`,
+   `claude --resume ID`).
 
 ## Dependencies
 

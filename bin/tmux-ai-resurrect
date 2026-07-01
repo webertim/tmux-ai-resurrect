@@ -32,61 +32,42 @@ die() {
 	exit 1
 }
 
-require_tmux() {
-	command -v tmux >/dev/null 2>&1 || die "tmux not found on PATH"
-}
-
-# Print a stable pane key: <session_name>--<window_index>--<pane_index>.
-# Falls back to $TMUX_PANE if a specific pane isn't given.
-#
-# We deliberately use session/window/pane INDICES rather than the volatile
-# tmux pane id (%N), because %N is reassigned across tmux server restarts and
-# would break resurrect-driven restore.
+# Stable pane key: <session>--<window_idx>--<pane_idx>.
+# We deliberately avoid the volatile tmux pane id (%N), which is reassigned
+# across server restarts and would break resurrect-driven restore.
 pane_key() {
-	require_tmux
-	target="${1:-${TMUX_PANE:-}}"
-	[ -n "$target" ] || die "no tmux pane in context (need \$TMUX_PANE or --pane)"
-	tmux display-message -p -t "$target" \
+	command -v tmux >/dev/null 2>&1 || die "tmux not found on PATH"
+	[ -n "${TMUX_PANE:-}" ] || die "no tmux pane in context (\$TMUX_PANE unset)"
+	tmux display-message -p -t "$TMUX_PANE" \
 		'#{session_name}--#{window_index}--#{pane_index}'
 }
 
 cache_file_for() {
-	key="$1"
-	[ -n "$key" ] || die "empty pane key"
-	# Filenames must not contain path separators; sanitize.
+	# cache_file_for <pane_key> <harness>
+	key="$1"; harness="$2"
 	safe=$(printf '%s' "$key" | tr '/' '_')
-	printf '%s/pane-%s.tsv\n' "$CACHE_DIR" "$safe"
+	printf '%s/%s-%s.session\n' "$CACHE_DIR" "$safe" "$harness"
 }
 
-# set --harness NAME (--session-id ID | --from-stdin-json) [--cwd DIR] [--pane-key KEY]
+# set --harness NAME (--session-id ID | --from-stdin-json)
 cmd_set() {
 	harness=""
 	session_id=""
-	cwd=""
-	key=""
 	from_stdin_json=0
 	while [ $# -gt 0 ]; do
 		case "$1" in
-			--harness) harness="$2"; shift 2 ;;
-			--session-id) session_id="$2"; shift 2 ;;
+			--harness)         harness="$2"; shift 2 ;;
+			--session-id)      session_id="$2"; shift 2 ;;
 			--from-stdin-json) from_stdin_json=1; shift ;;
-			--cwd) cwd="$2"; shift 2 ;;
-			--pane-key) key="$2"; shift 2 ;;
 			-h|--help)
 				cat <<'EOF'
-Usage: tmux-ai-resurrect set --harness NAME [options]
+Usage: tmux-ai-resurrect set --harness NAME (--session-id ID | --from-stdin-json)
 
-Records the currently-active AI session for the current tmux pane.
+Records the current AI session id for this tmux pane.
 
-Session ID source (one required):
-  --session-id ID         Take the ID directly from the command line.
-  --from-stdin-json       Read a JSON object from stdin and extract .session_id
-                          (used by Claude Code hooks, which pass event data
-                          this way).
-
-Optional:
-  --cwd DIR               Working directory to record (default: \$PWD).
-  --pane-key KEY          Override the pane key (default: derived from tmux).
+  --session-id ID     Take the ID from the command line.
+  --from-stdin-json   Read a JSON object from stdin and extract .session_id
+                      (used by Claude Code hooks).
 EOF
 				return 0
 				;;
@@ -96,101 +77,42 @@ EOF
 	[ -n "$harness" ] || die "set: --harness required"
 
 	if [ "$from_stdin_json" -eq 1 ]; then
-		json=$(cat)
-		if command -v jq >/dev/null 2>&1; then
-			session_id=$(printf '%s' "$json" | jq -r '.session_id // empty')
-		else
-			# Fallback regex for well-formed JSON. Session IDs are simple
-			# tokens (UUID-ish); no escaped quotes to worry about.
-			session_id=$(printf '%s' "$json" \
-				| sed -n 's/.*"session_id"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' \
-				| head -1)
-		fi
-		# Silently no-op when the harness sent us no session id — hooks fire
-		# in many contexts and we must never break the caller.
+		# Session IDs are simple tokens; a plain regex is enough and avoids
+		# a jq runtime dependency.
+		session_id=$(cat | sed -n \
+			's/.*"session_id"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' \
+			| head -1)
+		# Silent no-op when there's no session_id — hook callers must never
+		# be broken by us.
 		[ -n "$session_id" ] || return 0
 	fi
 	[ -n "$session_id" ] || die "set: --session-id or --from-stdin-json required"
-	[ -n "$key" ] || key=$(pane_key)
 
 	mkdir -p "$CACHE_DIR"
-	file=$(cache_file_for "$key")
-	now=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-	# Tab-separated key<TAB>value lines. Simple to parse from POSIX sh with awk.
-	{
-		printf 'harness\t%s\n' "$harness"
-		printf 'session_id\t%s\n' "$session_id"
-		printf 'cwd\t%s\n' "${cwd:-$PWD}"
-		printf 'pane_key\t%s\n' "$key"
-		printf 'updated_at\t%s\n' "$now"
-	} >"$file.tmp"
+	file=$(cache_file_for "$(pane_key)" "$harness")
+	printf '%s\n' "$session_id" >"$file.tmp"
 	mv -f "$file.tmp" "$file"
-}
-
-# get [--pane-key KEY] [--field NAME]
-cmd_get() {
-	key=""
-	field=""
-	while [ $# -gt 0 ]; do
-		case "$1" in
-			--pane-key) key="$2"; shift 2 ;;
-			--field) field="$2"; shift 2 ;;
-			-h|--help)
-				cat <<'EOF'
-Usage: tmux-ai-resurrect get [--pane-key KEY] [--field NAME]
-
-Prints the recorded session data for a pane. Without --field, prints all
-fields as tab-separated key<TAB>value lines. With --field, prints just that
-value on its own line. Exits non-zero if no record exists.
-EOF
-				return 0
-				;;
-			*) die "get: unknown arg: $1" ;;
-		esac
-	done
-	[ -n "$key" ] || key=$(pane_key)
-	file=$(cache_file_for "$key")
-	[ -f "$file" ] || die "no record for pane $key"
-	if [ -n "$field" ]; then
-		awk -F'\t' -v k="$field" '$1 == k { print $2; found=1 } END { exit !found }' "$file"
-	else
-		cat "$file"
-	fi
 }
 
 # resume <harness>
 #
-# Exec the given harness, resuming its previously-active session for the
-# current tmux pane if one is on record. Called by tmux-resurrect via a
-# process-restore entry (see the .tmux plugin file), so this function replaces
-# the current shell process on success.
-#
-# If no session record exists, launches the harness bare. Never blocks the
-# restore: if the harness binary is missing, prints an error and exits so the
-# pane just lands in the shell.
+# Exec the given harness, resuming its saved session for the current pane if
+# one is on record. Called by tmux-resurrect via @resurrect-processes.
 cmd_resume() {
 	harness="${1:-}"
-	[ -n "$harness" ] || die "resume: harness name required (e.g. opencode|claude|codex)"
+	[ -n "$harness" ] || die "resume: harness name required"
+	command -v "$harness" >/dev/null 2>&1 || die "resume: $harness not on PATH"
 
-	command -v "$harness" >/dev/null 2>&1 \
-		|| die "resume: $harness not found on PATH"
-
-	key=$(pane_key)
-	file=$(cache_file_for "$key")
-
+	file=$(cache_file_for "$(pane_key)" "$harness")
 	session_id=""
-	if [ -f "$file" ]; then
-		session_id=$(awk -F'\t' '$1 == "session_id" { print $2; exit }' "$file")
-	fi
+	[ -f "$file" ] && session_id=$(cat "$file")
 
 	if [ -z "$session_id" ]; then
 		exec "$harness"
 	fi
-
 	case "$harness" in
 		opencode) exec "$harness" --session "$session_id" ;;
-		claude)   exec "$harness" --resume "$session_id" ;;
-		codex)    exec "$harness" resume "$session_id" ;;
+		claude)   exec "$harness" --resume  "$session_id" ;;
 		*)        exec "$harness" ;;
 	esac
 }
@@ -198,10 +120,8 @@ cmd_resume() {
 list_harnesses() {
 	[ -d "$INTEGRATIONS_DIR" ] || return 0
 	for dir in "$INTEGRATIONS_DIR"/*/; do
-		[ -d "$dir" ] || continue
-		name=$(basename "$dir")
 		[ -f "$dir/install.sh" ] || continue
-		printf '%s\n' "$name"
+		basename "$dir"
 	done
 }
 
@@ -209,32 +129,27 @@ _run_harness_script() {
 	# _run_harness_script <phase> <harness> [args...]
 	phase="$1"; harness="$2"; shift 2
 	script="$INTEGRATIONS_DIR/$harness/$phase.sh"
-	[ -f "$script" ] || die "$phase: no integration for harness '$harness' (looked for $script)"
-	# Export a stable path to the CLI itself so scripts can reference it.
+	[ -f "$script" ] || die "$phase: no integration for '$harness' (looked for $script)"
 	TMUX_AI_RESURRECT_CLI="$BIN_DIR/tmux-ai-resurrect" \
 	TMUX_AI_RESURRECT_ROOT="$ROOT_DIR" \
 		sh "$script" "$@"
 }
 
-# install <harness> [--dry-run] [--force] | install --all
+# install <harness> [flags] | install --all
 cmd_install() {
 	[ $# -gt 0 ] || die "install: harness name or --all required"
 	if [ "$1" = "--all" ]; then
 		shift
-		any=0
 		for h in $(list_harnesses); do
-			any=1
 			printf '== install %s ==\n' "$h"
 			_run_harness_script install "$h" "$@" || printf 'install %s: failed\n' "$h" >&2
 		done
-		[ "$any" = "1" ] || die "install --all: no integrations found under $INTEGRATIONS_DIR"
 		return 0
 	fi
-	harness="$1"; shift
-	_run_harness_script install "$harness" "$@"
+	h="$1"; shift
+	_run_harness_script install "$h" "$@"
 }
 
-# uninstall <harness> | uninstall --all
 cmd_uninstall() {
 	[ $# -gt 0 ] || die "uninstall: harness name or --all required"
 	if [ "$1" = "--all" ]; then
@@ -245,11 +160,10 @@ cmd_uninstall() {
 		done
 		return 0
 	fi
-	harness="$1"; shift
-	_run_harness_script uninstall "$harness" "$@"
+	h="$1"; shift
+	_run_harness_script uninstall "$h" "$@"
 }
 
-# doctor [<harness>]
 cmd_doctor() {
 	if [ $# -gt 0 ]; then
 		_run_harness_script status "$1"
@@ -257,23 +171,11 @@ cmd_doctor() {
 	fi
 	printf 'tmux-ai-resurrect %s\n' "$VERSION"
 	printf 'cache dir: %s\n' "$CACHE_DIR"
-	printf 'root:      %s\n' "$ROOT_DIR"
 	printf '\nHarness status:\n'
-	found=0
 	for h in $(list_harnesses); do
-		found=1
 		printf '  %s: ' "$h"
-		if [ -f "$INTEGRATIONS_DIR/$h/status.sh" ]; then
-			_run_harness_script status "$h" || true
-		else
-			printf 'unknown (no status.sh)\n'
-		fi
+		_run_harness_script status "$h" || true
 	done
-	[ "$found" = "1" ] || printf '  (no integrations found under %s)\n' "$INTEGRATIONS_DIR"
-}
-
-cmd_version() {
-	printf 'tmux-ai-resurrect %s\n' "$VERSION"
 }
 
 usage() {
@@ -282,39 +184,24 @@ Usage: tmux-ai-resurrect <command> [args]
 
 Commands:
   set        Record the current AI session ID for this pane.
-  get        Print the recorded session data for a pane.
-  pane-key   Print the stable pane key for the current (or given) pane.
   resume     Exec an AI harness, resuming this pane's saved session.
   install    Install the integration for a harness (or --all).
   uninstall  Remove the integration for a harness (or --all).
-  doctor     Report configuration + per-harness install status.
-  version    Print the tool version.
-  help       Show this help.
+  doctor     Report per-harness install status.
 
 Run `tmux-ai-resurrect <command> --help` for command-specific options.
-
-Environment:
-  TMUX_AI_RESURRECT_CACHE_DIR   Override the cache directory
-                                (default: $XDG_CACHE_HOME/tmux-ai-resurrect
-                                          or ~/.cache/tmux-ai-resurrect).
 EOF
 }
 
-main() {
-	[ $# -gt 0 ] || { usage; exit 2; }
-	sub="$1"; shift
-	case "$sub" in
-		set)       cmd_set "$@" ;;
-		get)       cmd_get "$@" ;;
-		pane-key)  pane_key "${1:-}" ;;
-		resume)    cmd_resume "$@" ;;
-		install)   cmd_install "$@" ;;
-		uninstall) cmd_uninstall "$@" ;;
-		doctor)    cmd_doctor "$@" ;;
-		version|--version|-V) cmd_version ;;
-		help|--help|-h)       usage ;;
-		*) die "unknown command: $sub (try 'tmux-ai-resurrect help')" ;;
-	esac
-}
-
-main "$@"
+[ $# -gt 0 ] || { usage; exit 2; }
+sub="$1"; shift
+case "$sub" in
+	set)                    cmd_set "$@" ;;
+	resume)                 cmd_resume "$@" ;;
+	install)                cmd_install "$@" ;;
+	uninstall)              cmd_uninstall "$@" ;;
+	doctor)                 cmd_doctor "$@" ;;
+	version|-V|--version)   printf 'tmux-ai-resurrect %s\n' "$VERSION" ;;
+	help|-h|--help)         usage ;;
+	*) die "unknown command: $sub (try 'tmux-ai-resurrect help')" ;;
+esac
