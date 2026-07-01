@@ -113,6 +113,43 @@ EOF
 	fi
 }
 
+# resume <harness>
+#
+# Exec the given harness, resuming its previously-active session for the
+# current tmux pane if one is on record. Called by tmux-resurrect via a
+# process-restore entry (see the .tmux plugin file), so this function replaces
+# the current shell process on success.
+#
+# If no session record exists, launches the harness bare. Never blocks the
+# restore: if the harness binary is missing, prints an error and exits so the
+# pane just lands in the shell.
+cmd_resume() {
+	harness="${1:-}"
+	[ -n "$harness" ] || die "resume: harness name required (e.g. opencode|claude|codex)"
+
+	command -v "$harness" >/dev/null 2>&1 \
+		|| die "resume: $harness not found on PATH"
+
+	key=$(pane_key)
+	file=$(cache_file_for "$key")
+
+	session_id=""
+	if [ -f "$file" ]; then
+		session_id=$(awk -F'\t' '$1 == "session_id" { print $2; exit }' "$file")
+	fi
+
+	if [ -z "$session_id" ]; then
+		exec "$harness"
+	fi
+
+	case "$harness" in
+		opencode) exec "$harness" --session "$session_id" ;;
+		claude)   exec "$harness" --resume "$session_id" ;;
+		codex)    exec "$harness" resume "$session_id" ;;
+		*)        exec "$harness" ;;
+	esac
+}
+
 cmd_version() {
 	printf 'tmux-ai-resurrect %s\n' "$VERSION"
 }
@@ -125,6 +162,7 @@ Commands:
   set        Record the current AI session ID for this pane.
   get        Print the recorded session data for a pane.
   pane-key   Print the stable pane key for the current (or given) pane.
+  resume     Exec an AI harness, resuming this pane's saved session.
   version    Print the tool version.
   help       Show this help.
 
@@ -144,6 +182,7 @@ main() {
 		set)      cmd_set "$@" ;;
 		get)      cmd_get "$@" ;;
 		pane-key) pane_key "${1:-}" ;;
+		resume)   cmd_resume "$@" ;;
 		version|--version|-V) cmd_version ;;
 		help|--help|-h)       usage ;;
 		*) die "unknown command: $sub (try 'tmux-ai-resurrect help')" ;;
