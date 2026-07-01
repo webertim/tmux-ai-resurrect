@@ -60,11 +60,17 @@ link_one() {
 	printf 'opencode: installed → %s\n' "$target"
 }
 
-# The TUI file imports from ./tmux-ai-resurrect.js, so the server plugin
-# MUST be symlinked under that exact filename in the plugins dir.
+# Server plugin only. opencode's plugins-dir loader instantiates EVERY
+# exported function in a module as a plugin, so plugin.js must export just
+# its factory (helpers are module-internal).
 link_one "$TMUX_AI_RESURRECT_ROOT/integrations/opencode/plugin.js" \
          "$target_dir/tmux-ai-resurrect.js"
-link_one "$TMUX_AI_RESURRECT_ROOT/integrations/opencode/tui.js" \
-         "$target_dir/tmux-ai-resurrect-tui.js"
+
+# NOTE: tui.js is intentionally NOT installed. opencode's server process
+# loads every plugins-dir file with kind="server" and throws on a tui-only
+# module ("must default export an object with server()"), which cascades and
+# breaks provider config. There is no supported way to drop a standalone TUI
+# plugin into the plugins dir in current opencode, so the companion is
+# disabled until a supported delivery path exists.
 
 [ "$DRY_RUN" -eq 1 ] || printf 'Restart opencode to pick up the plugins.\n'

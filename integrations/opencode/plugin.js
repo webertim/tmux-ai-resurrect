@@ -17,7 +17,7 @@ const TMUX_PANE = process.env.TMUX_PANE || "";
 
 let lastSessionID = "";
 
-export function writeSession(sessionID) {
+function writeSession(sessionID) {
 	if (!TMUX_PANE) return;
 	if (typeof sessionID !== "string" || !sessionID.startsWith("ses_")) return;
 	if (sessionID === lastSessionID) return;
@@ -32,7 +32,7 @@ export function writeSession(sessionID) {
 // Event payloads can carry the session id in a few different shapes
 // depending on opencode version and event type. Try them all rather than
 // hard-coding one — the cost is a couple of extra property lookups.
-export function extractSessionID(event) {
+function extractSessionID(event) {
 	const props = event?.properties;
 	if (!props) return null;
 	const candidates = [
