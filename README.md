@@ -66,17 +66,29 @@ tmux-ai-resurrect doctor
    (`<session>--<window_idx>--<pane_idx>`) rather than tmux's volatile
    `%N` id — so the mapping survives tmux server restarts.
 3. tmux-resurrect saves and restores the pane layout as usual.
-4. On restore, the TPM entry `tmux-ai-resurrect.tmux` has registered
-   opencode/claude in `@resurrect-processes` with a resume wrapper:
+4. tmux-resurrect saves the pane layout as usual (with `:all:` set,
+   `pane_full_command` captures each pane's argv).
+5. A `@resurrect-hook-post-save-all` script (`scripts/post-save.sh`)
+   runs after the save. For each pane whose command is a supported
+   harness, it rewrites `pane_full_command` to include `--session <id>`
+   / `--resume <id>` from our cache — so bare-launched harnesses also
+   restore to the right session.
+6. On restore, tmux-resurrect uses its default behavior: type
+   `pane_full_command` into the pane. Since we've made sure that field
+   always carries the session id, restore just works — no custom
+   restore wrapper needed.
 
-   ```
-   ~opencode->tmux-ai-resurrect resume opencode
-   ~claude  ->tmux-ai-resurrect resume claude
-   ```
+## Known limitations
 
-   The wrapper looks up the pane's saved session id and execs the harness
-   with the appropriate resume flag (`opencode --session ID`,
-   `claude --resume ID`).
+**opencode: `/sessions` picking is invisible to plugins.** When you
+select an existing session via `/sessions` without sending a message,
+opencode emits no server-side event our plugin can hook. The cache
+stays as it was until you send any message (fires `chat.message`) or
+create a new session (fires `session.created`). Upstream feature
+request: [opencode #33539](https://github.com/anomalyco/opencode/issues/33539).
+
+Workaround: send any short message after switching sessions if you
+want the switch captured before the next tmux save.
 
 ## Dependencies
 

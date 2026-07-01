@@ -78,29 +78,6 @@ EOF
 	mv -f "$file.tmp" "$file"
 }
 
-# resume <harness>
-#
-# Exec the given harness, resuming its saved session for the current pane if
-# one is on record. Called by tmux-resurrect via @resurrect-processes.
-cmd_resume() {
-	harness="${1:-}"
-	[ -n "$harness" ] || die "resume: harness name required"
-	command -v "$harness" >/dev/null 2>&1 || die "resume: $harness not on PATH"
-
-	file=$(cache_file_for "$(pane_key)" "$harness")
-	session_id=""
-	[ -f "$file" ] && session_id=$(cat "$file")
-
-	if [ -z "$session_id" ]; then
-		exec "$harness"
-	fi
-	case "$harness" in
-		opencode) exec "$harness" --session "$session_id" ;;
-		claude)   exec "$harness" --resume  "$session_id" ;;
-		*)        exec "$harness" ;;
-	esac
-}
-
 list_harnesses() {
 	[ -d "$INTEGRATIONS_DIR" ] || return 0
 	for dir in "$INTEGRATIONS_DIR"/*/; do
@@ -168,7 +145,6 @@ Usage: tmux-ai-resurrect <command> [args]
 
 Commands:
   set        Record the current AI session ID for this pane.
-  resume     Exec an AI harness, resuming this pane's saved session.
   install    Install the integration for a harness (or --all).
   uninstall  Remove the integration for a harness (or --all).
   doctor     Report per-harness install status.
@@ -181,7 +157,6 @@ EOF
 sub="$1"; shift
 case "$sub" in
 	set)                    cmd_set "$@" ;;
-	resume)                 cmd_resume "$@" ;;
 	install)                cmd_install "$@" ;;
 	uninstall)              cmd_uninstall "$@" ;;
 	doctor)                 cmd_doctor "$@" ;;

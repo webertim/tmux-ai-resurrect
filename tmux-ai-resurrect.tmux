@@ -1,21 +1,23 @@
 #!/usr/bin/env sh
 # tmux-ai-resurrect TPM entry point.
 #
-# Registers AI-harness commands with tmux-resurrect's @resurrect-processes
-# so that panes running a supported harness are relaunched on restore via
-# `tmux-ai-resurrect resume <harness>`, which threads through the pane's
-# saved session id.
+# Wires our post-save hook into tmux-resurrect. The hook rewrites each
+# harness pane's `pane_full_command` in the save file to include the
+# session ID from our cache, so resurrect's default restore (which types
+# the full command into the pane) resumes the correct session.
 
 set -eu
 
 CURRENT_DIR="$(cd -- "$(dirname -- "$0")" && pwd)"
-CLI="$CURRENT_DIR/bin/tmux-ai-resurrect"
+HOOK="$CURRENT_DIR/scripts/post-save.sh"
 
-add='"~opencode->'"$CLI"' resume opencode" "~claude->'"$CLI"' resume claude"'
-
-existing=$(tmux show-option -gqv @resurrect-processes || true)
+existing=$(tmux show-option -gqv @resurrect-hook-post-save-all || true)
 case "$existing" in
-	*"$CLI resume"*) ;;  # already installed
-	"")              tmux set-option -g @resurrect-processes "$add" ;;
-	*)               tmux set-option -g @resurrect-processes "$existing $add" ;;
+	"$HOOK") ;;                                # already installed
+	"")      tmux set-option -g @resurrect-hook-post-save-all "$HOOK" ;;
+	*)
+		# Something else is wired up. Don't clobber; log where to look.
+		tmux display-message -d 0 \
+			"tmux-ai-resurrect: @resurrect-hook-post-save-all is set to another script; not overriding"
+		;;
 esac
