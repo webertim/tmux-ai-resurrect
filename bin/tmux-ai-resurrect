@@ -9,6 +9,24 @@ VERSION="0.1.0"
 
 CACHE_DIR="${TMUX_AI_RESURRECT_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/tmux-ai-resurrect}"
 
+# Resolve $0 through any chain of symlinks so we can locate integrations/
+# even when the CLI is symlinked into ~/.local/bin/.
+_resolve_self() {
+	self="$1"
+	while [ -L "$self" ]; do
+		dir=$(cd "$(dirname "$self")" && pwd)
+		target=$(readlink "$self")
+		case "$target" in
+			/*) self="$target" ;;
+			*)  self="$dir/$target" ;;
+		esac
+	done
+	cd "$(dirname "$self")" && pwd
+}
+BIN_DIR=$(_resolve_self "$0")
+ROOT_DIR=$(cd "$BIN_DIR/.." && pwd)
+INTEGRATIONS_DIR="$ROOT_DIR/integrations"
+
 die() {
 	printf 'tmux-ai-resurrect: %s\n' "$*" >&2
 	exit 1
@@ -150,6 +168,83 @@ cmd_resume() {
 	esac
 }
 
+list_harnesses() {
+	[ -d "$INTEGRATIONS_DIR" ] || return 0
+	for dir in "$INTEGRATIONS_DIR"/*/; do
+		[ -d "$dir" ] || continue
+		name=$(basename "$dir")
+		[ -f "$dir/install.sh" ] || continue
+		printf '%s\n' "$name"
+	done
+}
+
+_run_harness_script() {
+	# _run_harness_script <phase> <harness> [args...]
+	phase="$1"; harness="$2"; shift 2
+	script="$INTEGRATIONS_DIR/$harness/$phase.sh"
+	[ -f "$script" ] || die "$phase: no integration for harness '$harness' (looked for $script)"
+	# Export a stable path to the CLI itself so scripts can reference it.
+	TMUX_AI_RESURRECT_CLI="$BIN_DIR/tmux-ai-resurrect" \
+	TMUX_AI_RESURRECT_ROOT="$ROOT_DIR" \
+		sh "$script" "$@"
+}
+
+# install <harness> [--dry-run] [--force] | install --all
+cmd_install() {
+	[ $# -gt 0 ] || die "install: harness name or --all required"
+	if [ "$1" = "--all" ]; then
+		shift
+		any=0
+		for h in $(list_harnesses); do
+			any=1
+			printf '== install %s ==\n' "$h"
+			_run_harness_script install "$h" "$@" || printf 'install %s: failed\n' "$h" >&2
+		done
+		[ "$any" = "1" ] || die "install --all: no integrations found under $INTEGRATIONS_DIR"
+		return 0
+	fi
+	harness="$1"; shift
+	_run_harness_script install "$harness" "$@"
+}
+
+# uninstall <harness> | uninstall --all
+cmd_uninstall() {
+	[ $# -gt 0 ] || die "uninstall: harness name or --all required"
+	if [ "$1" = "--all" ]; then
+		shift
+		for h in $(list_harnesses); do
+			printf '== uninstall %s ==\n' "$h"
+			_run_harness_script uninstall "$h" "$@" || printf 'uninstall %s: failed\n' "$h" >&2
+		done
+		return 0
+	fi
+	harness="$1"; shift
+	_run_harness_script uninstall "$harness" "$@"
+}
+
+# doctor [<harness>]
+cmd_doctor() {
+	if [ $# -gt 0 ]; then
+		_run_harness_script status "$1"
+		return $?
+	fi
+	printf 'tmux-ai-resurrect %s\n' "$VERSION"
+	printf 'cache dir: %s\n' "$CACHE_DIR"
+	printf 'root:      %s\n' "$ROOT_DIR"
+	printf '\nHarness status:\n'
+	found=0
+	for h in $(list_harnesses); do
+		found=1
+		printf '  %s: ' "$h"
+		if [ -f "$INTEGRATIONS_DIR/$h/status.sh" ]; then
+			_run_harness_script status "$h" || true
+		else
+			printf 'unknown (no status.sh)\n'
+		fi
+	done
+	[ "$found" = "1" ] || printf '  (no integrations found under %s)\n' "$INTEGRATIONS_DIR"
+}
+
 cmd_version() {
 	printf 'tmux-ai-resurrect %s\n' "$VERSION"
 }
@@ -163,6 +258,9 @@ Commands:
   get        Print the recorded session data for a pane.
   pane-key   Print the stable pane key for the current (or given) pane.
   resume     Exec an AI harness, resuming this pane's saved session.
+  install    Install the integration for a harness (or --all).
+  uninstall  Remove the integration for a harness (or --all).
+  doctor     Report configuration + per-harness install status.
   version    Print the tool version.
   help       Show this help.
 
@@ -179,10 +277,13 @@ main() {
 	[ $# -gt 0 ] || { usage; exit 2; }
 	sub="$1"; shift
 	case "$sub" in
-		set)      cmd_set "$@" ;;
-		get)      cmd_get "$@" ;;
-		pane-key) pane_key "${1:-}" ;;
-		resume)   cmd_resume "$@" ;;
+		set)       cmd_set "$@" ;;
+		get)       cmd_get "$@" ;;
+		pane-key)  pane_key "${1:-}" ;;
+		resume)    cmd_resume "$@" ;;
+		install)   cmd_install "$@" ;;
+		uninstall) cmd_uninstall "$@" ;;
+		doctor)    cmd_doctor "$@" ;;
 		version|--version|-V) cmd_version ;;
 		help|--help|-h)       usage ;;
 		*) die "unknown command: $sub (try 'tmux-ai-resurrect help')" ;;
