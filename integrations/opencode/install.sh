@@ -1,7 +1,7 @@
 #!/usr/bin/env sh
 # tmux-ai-resurrect — install the opencode integration.
 #
-# Symlinks integrations/opencode/plugin.mjs into the opencode plugins
+# Symlinks integrations/opencode/plugin.js into the opencode plugins
 # directory. Idempotent: safe to run repeatedly. Refuses to clobber an
 # existing non-symlink file at the target unless --force is given.
 
@@ -33,9 +33,9 @@ done
 
 : "${TMUX_AI_RESURRECT_ROOT:?call via 'tmux-ai-resurrect install opencode' — TMUX_AI_RESURRECT_ROOT not set}"
 
-src="$TMUX_AI_RESURRECT_ROOT/integrations/opencode/plugin.mjs"
+src="$TMUX_AI_RESURRECT_ROOT/integrations/opencode/plugin.js"
 target_dir="${OPENCODE_PLUGINS_DIR:-${XDG_CONFIG_HOME:-$HOME/.config}/opencode/plugins}"
-target="$target_dir/tmux-ai-resurrect.mjs"
+target="$target_dir/tmux-ai-resurrect.js"
 
 [ -f "$src" ] || { printf 'install-opencode: plugin source missing: %s\n' "$src" >&2; exit 1; }
 

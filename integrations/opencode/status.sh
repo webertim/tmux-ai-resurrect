@@ -5,9 +5,9 @@
 set -eu
 
 : "${TMUX_AI_RESURRECT_ROOT:?}"
-src="$TMUX_AI_RESURRECT_ROOT/integrations/opencode/plugin.mjs"
+src="$TMUX_AI_RESURRECT_ROOT/integrations/opencode/plugin.js"
 target_dir="${OPENCODE_PLUGINS_DIR:-${XDG_CONFIG_HOME:-$HOME/.config}/opencode/plugins}"
-target="$target_dir/tmux-ai-resurrect.mjs"
+target="$target_dir/tmux-ai-resurrect.js"
 
 if [ -L "$target" ] && [ "$(readlink "$target")" = "$src" ]; then
 	printf 'installed (symlink at %s)\n' "$target"
