@@ -1,0 +1,9 @@
+{
+  "$schema": "https://anthropic.com/claude-code/plugin.schema.json",
+  "name": "tmux-ai-resurrect",
+  "version": "0.1.0",
+  "description": "Persist Claude Code sessions per tmux pane for tmux-resurrect.",
+  "author": {
+    "name": "Tim Weber"
+  }
+}

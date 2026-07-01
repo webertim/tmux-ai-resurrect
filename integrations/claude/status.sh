@@ -4,20 +4,17 @@
 
 set -eu
 
-settings="${CLAUDE_SETTINGS_FILE:-$HOME/.claude/settings.json}"
-marker='set --harness claude --from-stdin-json'
+: "${TMUX_AI_RESURRECT_ROOT:?}"
+src="$TMUX_AI_RESURRECT_ROOT/integrations/claude/plugin"
+target_dir="${CLAUDE_PLUGINS_DIR:-$HOME/.claude/skills}"
+target="$target_dir/tmux-ai-resurrect"
 
-if [ ! -f "$settings" ]; then
-	if command -v claude >/dev/null 2>&1; then
-		printf 'not installed (claude found on PATH — run: tmux-ai-resurrect install claude)\n'
-	else
-		printf 'not installed (claude not on PATH)\n'
-	fi
-	exit 0
-fi
-
-if grep -q "$marker" "$settings" 2>/dev/null; then
-	printf 'installed (hook present in %s)\n' "$settings"
+if [ -L "$target" ] && [ "$(readlink "$target")" = "$src" ]; then
+	printf 'installed (symlink at %s)\n' "$target"
+elif [ -e "$target" ]; then
+	printf 'conflict: %s exists but does not point at our plugin\n' "$target"
+elif command -v claude >/dev/null 2>&1; then
+	printf 'not installed (claude found on PATH — run: tmux-ai-resurrect install claude)\n'
 else
-	printf 'not installed (hook not present in %s)\n' "$settings"
+	printf 'not installed (claude not on PATH)\n'
 fi

@@ -13,7 +13,7 @@ opencode / Claude Code / Codex CLI session each pane was on.
 | Harness      | Mechanism                                                                 | Install command                           |
 |--------------|---------------------------------------------------------------------------|-------------------------------------------|
 | opencode     | opencode plugin (auto-loaded from `~/.config/opencode/plugins/`)          | `tmux-ai-resurrect install opencode`      |
-| Claude Code  | `SessionStart` + `UserPromptSubmit` hooks in `~/.claude/settings.json`    | `tmux-ai-resurrect install claude`        |
+| Claude Code  | Claude Code plugin (auto-loaded from `~/.claude/skills/`)                 | `tmux-ai-resurrect install claude`        |
 | Codex CLI    | (planned)                                                                 | —                                         |
 
 Adding a harness is small: three shell scripts under `integrations/<name>/`.
@@ -85,9 +85,9 @@ tmux-ai-resurrect doctor
 Deliberately minimal:
 
 - **Required** for anyone: `tmux`, `tmux-resurrect`, POSIX `sh` + coreutils.
-- **Claude install only**: `jq` (with a `python3` fallback, or a
-  copy/paste snippet if neither is present).
 - **opencode install**: nothing beyond `ln`. Opencode brings its own Bun.
+- **Claude install**: nothing beyond `ln`. Ships as a Claude Code plugin,
+  auto-loaded from `~/.claude/skills/` — no JSON editing required.
 
 Nothing is compiled, no Node runtime is bundled, no npm publish.
 
@@ -98,7 +98,7 @@ Nothing is compiled, no Node runtime is bundled, no npm publish.
 | `TMUX_AI_RESURRECT_CACHE_DIR`       | Override cache dir (default: `$XDG_CACHE_HOME/tmux-ai-resurrect`).         |
 | `TMUX_AI_RESURRECT_CLI`             | Set inside integrations to point at the CLI binary. Rarely needed manually.|
 | `OPENCODE_PLUGINS_DIR`              | Override opencode install target (default: `~/.config/opencode/plugins/`). |
-| `CLAUDE_SETTINGS_FILE`              | Override Claude settings path (default: `~/.claude/settings.json`).        |
+| `CLAUDE_PLUGINS_DIR`                | Override Claude plugins directory (default: `~/.claude/skills/`).           |
 
 ## Extending
 
