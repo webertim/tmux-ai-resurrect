@@ -1,0 +1,153 @@
+#!/usr/bin/env sh
+# tmux-ai-resurrect — persist AI coding-harness session IDs per tmux pane.
+#
+# See https://github.com/webertim/tmux-ai-resurrect for docs.
+
+set -eu
+
+VERSION="0.1.0"
+
+CACHE_DIR="${TMUX_AI_RESURRECT_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/tmux-ai-resurrect}"
+
+die() {
+	printf 'tmux-ai-resurrect: %s\n' "$*" >&2
+	exit 1
+}
+
+require_tmux() {
+	command -v tmux >/dev/null 2>&1 || die "tmux not found on PATH"
+}
+
+# Print a stable pane key: <session_name>--<window_index>--<pane_index>.
+# Falls back to $TMUX_PANE if a specific pane isn't given.
+#
+# We deliberately use session/window/pane INDICES rather than the volatile
+# tmux pane id (%N), because %N is reassigned across tmux server restarts and
+# would break resurrect-driven restore.
+pane_key() {
+	require_tmux
+	target="${1:-${TMUX_PANE:-}}"
+	[ -n "$target" ] || die "no tmux pane in context (need \$TMUX_PANE or --pane)"
+	tmux display-message -p -t "$target" \
+		'#{session_name}--#{window_index}--#{pane_index}'
+}
+
+cache_file_for() {
+	key="$1"
+	[ -n "$key" ] || die "empty pane key"
+	# Filenames must not contain path separators; sanitize.
+	safe=$(printf '%s' "$key" | tr '/' '_')
+	printf '%s/pane-%s.tsv\n' "$CACHE_DIR" "$safe"
+}
+
+# set --harness NAME --session-id ID [--cwd DIR] [--pane-key KEY]
+cmd_set() {
+	harness=""
+	session_id=""
+	cwd=""
+	key=""
+	while [ $# -gt 0 ]; do
+		case "$1" in
+			--harness) harness="$2"; shift 2 ;;
+			--session-id) session_id="$2"; shift 2 ;;
+			--cwd) cwd="$2"; shift 2 ;;
+			--pane-key) key="$2"; shift 2 ;;
+			-h|--help)
+				cat <<'EOF'
+Usage: tmux-ai-resurrect set --harness NAME --session-id ID [--cwd DIR] [--pane-key KEY]
+
+Records the currently-active AI session for the current tmux pane. Called by
+per-harness integrations whenever the harness reports a session change.
+EOF
+				return 0
+				;;
+			*) die "set: unknown arg: $1" ;;
+		esac
+	done
+	[ -n "$harness" ] || die "set: --harness required"
+	[ -n "$session_id" ] || die "set: --session-id required"
+	[ -n "$key" ] || key=$(pane_key)
+
+	mkdir -p "$CACHE_DIR"
+	file=$(cache_file_for "$key")
+	now=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+	# Tab-separated key<TAB>value lines. Simple to parse from POSIX sh with awk.
+	{
+		printf 'harness\t%s\n' "$harness"
+		printf 'session_id\t%s\n' "$session_id"
+		printf 'cwd\t%s\n' "${cwd:-$PWD}"
+		printf 'pane_key\t%s\n' "$key"
+		printf 'updated_at\t%s\n' "$now"
+	} >"$file.tmp"
+	mv -f "$file.tmp" "$file"
+}
+
+# get [--pane-key KEY] [--field NAME]
+cmd_get() {
+	key=""
+	field=""
+	while [ $# -gt 0 ]; do
+		case "$1" in
+			--pane-key) key="$2"; shift 2 ;;
+			--field) field="$2"; shift 2 ;;
+			-h|--help)
+				cat <<'EOF'
+Usage: tmux-ai-resurrect get [--pane-key KEY] [--field NAME]
+
+Prints the recorded session data for a pane. Without --field, prints all
+fields as tab-separated key<TAB>value lines. With --field, prints just that
+value on its own line. Exits non-zero if no record exists.
+EOF
+				return 0
+				;;
+			*) die "get: unknown arg: $1" ;;
+		esac
+	done
+	[ -n "$key" ] || key=$(pane_key)
+	file=$(cache_file_for "$key")
+	[ -f "$file" ] || die "no record for pane $key"
+	if [ -n "$field" ]; then
+		awk -F'\t' -v k="$field" '$1 == k { print $2; found=1 } END { exit !found }' "$file"
+	else
+		cat "$file"
+	fi
+}
+
+cmd_version() {
+	printf 'tmux-ai-resurrect %s\n' "$VERSION"
+}
+
+usage() {
+	cat <<'EOF'
+Usage: tmux-ai-resurrect <command> [args]
+
+Commands:
+  set        Record the current AI session ID for this pane.
+  get        Print the recorded session data for a pane.
+  pane-key   Print the stable pane key for the current (or given) pane.
+  version    Print the tool version.
+  help       Show this help.
+
+Run `tmux-ai-resurrect <command> --help` for command-specific options.
+
+Environment:
+  TMUX_AI_RESURRECT_CACHE_DIR   Override the cache directory
+                                (default: $XDG_CACHE_HOME/tmux-ai-resurrect
+                                          or ~/.cache/tmux-ai-resurrect).
+EOF
+}
+
+main() {
+	[ $# -gt 0 ] || { usage; exit 2; }
+	sub="$1"; shift
+	case "$sub" in
+		set)      cmd_set "$@" ;;
+		get)      cmd_get "$@" ;;
+		pane-key) pane_key "${1:-}" ;;
+		version|--version|-V) cmd_version ;;
+		help|--help|-h)       usage ;;
+		*) die "unknown command: $sub (try 'tmux-ai-resurrect help')" ;;
+	esac
+}
+
+main "$@"
